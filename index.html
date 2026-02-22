@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>EXIF Metadata Extractor</title>
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet"/>
+  <style>
+    :root {
+      --bg:       #080c10;
+      --surface:  #0d1117;
+      --border:   #1e2d3d;
+      --accent:   #00d4ff;
+      --accent2:  #00ff9d;
+      --warn:     #ffb800;
+      --danger:   #ff4757;
+      --text:     #c9d1d9;
+      --dim:      #4a5568;
+      --mono:     'Share Tech Mono', monospace;
+      --head:     'Rajdhani', sans-serif;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--mono);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* Scanline overlay */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0,212,255,0.015) 2px,
+        rgba(0,212,255,0.015) 4px
+      );
+      pointer-events: none;
+      z-index: 1000;
+    }
+
+    /* Grid background */
+    body::after {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(0,212,255,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,212,255,0.03) 1px, transparent 1px);
+      background-size: 40px 40px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .container {
+      position: relative;
+      z-index: 1;
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 40px 24px;
+    }
+
+    /* Header */
+    header {
+      text-align: center;
+      margin-bottom: 48px;
+    }
+
+    .logo {
+      font-family: var(--head);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 4px;
+      color: var(--accent);
+      text-transform: uppercase;
+      opacity: 0.7;
+      margin-bottom: 8px;
+    }
+
+    h1 {
+      font-family: var(--head);
+      font-size: clamp(28px, 5vw, 48px);
+      font-weight: 700;
+      color: #fff;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      line-height: 1;
+    }
+
+    h1 span { color: var(--accent); }
+
+    .subtitle {
+      margin-top: 12px;
+      font-size: 13px;
+      color: var(--dim);
+      letter-spacing: 1px;
+    }
+
+    /* Drop zone */
+    .drop-zone {
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 56px 24px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      background: var(--surface);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .drop-zone::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse at center, rgba(0,212,255,0.04) 0%, transparent 70%);
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+
+    .drop-zone:hover::before,
+    .drop-zone.drag-over::before { opacity: 1; }
+
+    .drop-zone:hover,
+    .drop-zone.drag-over {
+      border-color: var(--accent);
+      box-shadow: 0 0 20px rgba(0,212,255,0.1), inset 0 0 20px rgba(0,212,255,0.03);
+    }
+
+    .drop-zone.drag-over { border-style: dashed; }
+
+    .drop-icon {
+      font-size: 40px;
+      margin-bottom: 16px;
+      display: block;
+      filter: drop-shadow(0 0 8px var(--accent));
+    }
+
+    .drop-text {
+      font-family: var(--head);
+      font-size: 18px;
+      font-weight: 600;
+      color: #fff;
+      letter-spacing: 1px;
+      margin-bottom: 8px;
+    }
+
+    .drop-sub {
+      font-size: 12px;
+      color: var(--dim);
+      letter-spacing: 1px;
+    }
+
+    #file-input { display: none; }
+
+    .btn {
+      display: inline-block;
+      margin-top: 20px;
+      padding: 10px 28px;
+      border: 1px solid var(--accent);
+      color: var(--accent);
+      background: transparent;
+      font-family: var(--mono);
+      font-size: 13px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: all 0.2s;
+      border-radius: 2px;
+    }
+
+    .btn:hover {
+      background: var(--accent);
+      color: var(--bg);
+      box-shadow: 0 0 20px rgba(0,212,255,0.3);
+    }
+
+    /* Results */
+    #results { margin-top: 40px; display: none; }
+
+    .preview-wrap {
+      display: flex;
+      align-items: flex-start;
+      gap: 24px;
+      margin-bottom: 32px;
+      flex-wrap: wrap;
+    }
+
+    .preview-img {
+      width: 160px;
+      height: 160px;
+      object-fit: cover;
+      border: 1px solid var(--border);
+      border-radius: 2px;
+      flex-shrink: 0;
+      box-shadow: 0 0 20px rgba(0,0,0,0.5);
+    }
+
+    .preview-info {
+      flex: 1;
+      min-width: 200px;
+    }
+
+    .preview-info .filename {
+      font-family: var(--head);
+      font-size: 22px;
+      font-weight: 700;
+      color: #fff;
+      word-break: break-all;
+      margin-bottom: 6px;
+    }
+
+    .preview-info .filesize {
+      font-size: 12px;
+      color: var(--dim);
+      letter-spacing: 1px;
+    }
+
+    /* Section cards */
+    .section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      margin-bottom: 16px;
+      overflow: hidden;
+      animation: fadeUp 0.4s ease both;
+    }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(12px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .section:nth-child(1) { animation-delay: 0.05s; }
+    .section:nth-child(2) { animation-delay: 0.1s; }
+    .section:nth-child(3) { animation-delay: 0.15s; }
+    .section:nth-child(4) { animation-delay: 0.2s; }
+    .section:nth-child(5) { animation-delay: 0.25s; }
+
+    .section-header {
+      padding: 12px 20px;
+      background: rgba(0,212,255,0.04);
+      border-bottom: 1px solid var(--border);
+      font-family: var(--head);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: var(--accent);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .section-header .badge {
+      margin-left: auto;
+      background: rgba(0,212,255,0.1);
+      border: 1px solid rgba(0,212,255,0.2);
+      color: var(--accent);
+      font-size: 10px;
+      padding: 2px 8px;
+      border-radius: 20px;
+      letter-spacing: 1px;
+    }
+
+    .section-header .badge.found { background: rgba(0,255,157,0.1); border-color: rgba(0,255,157,0.3); color: var(--accent2); }
+    .section-header .badge.warn  { background: rgba(255,184,0,0.1);  border-color: rgba(255,184,0,0.3);  color: var(--warn); }
+    .section-header .badge.none  { background: rgba(74,85,104,0.2);  border-color: var(--border);         color: var(--dim); }
+
+    .section-body { padding: 16px 20px; }
+
+    .row {
+      display: grid;
+      grid-template-columns: 180px 1fr;
+      gap: 8px 16px;
+      padding: 7px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.03);
+      align-items: start;
+    }
+
+    .row:last-child { border-bottom: none; }
+
+    .row-key {
+      font-size: 11px;
+      color: var(--dim);
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      padding-top: 2px;
+    }
+
+    .row-val {
+      font-size: 13px;
+      color: var(--text);
+      word-break: break-all;
+    }
+
+    .row-val a {
+      color: var(--accent2);
+      text-decoration: none;
+      border-bottom: 1px solid rgba(0,255,157,0.3);
+      transition: color 0.2s;
+    }
+
+    .row-val a:hover { color: #fff; }
+
+    .gps-highlight .row-val { color: var(--accent2); font-weight: bold; }
+
+    .no-data {
+      font-size: 12px;
+      color: var(--dim);
+      letter-spacing: 1px;
+      padding: 4px 0;
+    }
+
+    /* Alert banner */
+    .alert {
+      padding: 12px 20px;
+      border-radius: 2px;
+      font-size: 12px;
+      letter-spacing: 0.5px;
+      margin-bottom: 24px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .alert-gps {
+      background: rgba(255,71,87,0.08);
+      border: 1px solid rgba(255,71,87,0.3);
+      color: var(--danger);
+    }
+
+    .alert-clean {
+      background: rgba(0,255,157,0.05);
+      border: 1px solid rgba(0,255,157,0.2);
+      color: var(--accent2);
+    }
+
+    /* Reset button */
+    .reset-row {
+      text-align: center;
+      margin-top: 32px;
+    }
+
+    /* Glitch animation on header */
+    @keyframes glitch {
+      0%, 90%, 100% { text-shadow: none; }
+      92% { text-shadow: 2px 0 var(--accent), -2px 0 var(--accent2); }
+      94% { text-shadow: -2px 0 var(--accent), 2px 0 var(--accent2); }
+    }
+
+    h1 { animation: glitch 6s infinite; }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <div class="logo">// Digital Forensics Tool</div>
+    <h1>EXIF <span>Metadata</span> Extractor</h1>
+    <p class="subtitle">Uncover hidden data embedded in image files</p>
+  </header>
+
+  <!-- Drop Zone -->
+  <div class="drop-zone" id="drop-zone">
+    <span class="drop-icon">🔬</span>
+    <div class="drop-text">Drop an image to analyze</div>
+    <div class="drop-sub">Supports JPG, PNG, TIFF, HEIC &nbsp;·&nbsp; All processing is local — nothing is uploaded</div>
+    <button class="btn" onclick="document.getElementById('file-input').click()">Select File</button>
+    <input type="file" id="file-input" accept="image/*" />
+  </div>
+
+  <!-- Results -->
+  <div id="results">
+    <div class="preview-wrap">
+      <img class="preview-img" id="preview-img" src="" alt="preview" />
+      <div class="preview-info">
+        <div class="filename" id="res-filename">—</div>
+        <div class="filesize" id="res-filesize">—</div>
+      </div>
+    </div>
+
+    <div id="alert-box"></div>
+    <div id="sections"></div>
+
+    <div class="reset-row">
+      <button class="btn" onclick="resetTool()">Analyze Another Image</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  // ---- EXIF Parser (minimal, no library needed) ----
+  // We use a lightweight approach: read the raw JPEG binary and parse EXIF tags.
+
+  const EXIF_TAGS = {
+    0x010F: "Make", 0x0110: "Model", 0x0131: "Software",
+    0x0132: "DateTime", 0x9003: "DateTimeOriginal", 0x9004: "DateTimeDigitized",
+    0xA002: "ExifImageWidth", 0xA003: "ExifImageHeight",
+    0x0112: "Orientation", 0x9209: "Flash",
+    0x920A: "FocalLength", 0x829A: "ExposureTime", 0x829D: "FNumber",
+    0x8827: "ISOSpeedRatings", 0xA403: "WhiteBalance", 0xA402: "ExposureMode",
+    0x8825: "GPSInfo", 0x013B: "Artist", 0x8298: "Copyright",
+    0xA420: "ImageUniqueID", 0x9286: "UserComment",
+    0xA434: "LensModel", 0xA433: "LensMake",
+    0x0100: "ImageWidth", 0x0101: "ImageHeight",
+  };
+
+  const GPS_TAGS = {
+    0: "GPSVersionID", 1: "GPSLatitudeRef", 2: "GPSLatitude",
+    3: "GPSLongitudeRef", 4: "GPSLongitude", 5: "GPSAltitudeRef",
+    6: "GPSAltitude", 7: "GPSTimeStamp", 12: "GPSSpeedRef",
+    13: "GPSSpeed", 16: "GPSImgDirectionRef", 17: "GPSImgDirection",
+    29: "GPSDateStamp",
+  };
+
+  function readUint16(view, offset, le) { return view.getUint16(offset, le); }
+  function readUint32(view, offset, le) { return view.getUint32(offset, le); }
+  function readInt32(view, offset, le)  { return view.getInt32(offset, le); }
+
+  function readRational(view, offset, le) {
+    const num = readUint32(view, offset, le);
+    const den = readUint32(view, offset + 4, le);
+    return den !== 0 ? num / den : 0;
+  }
+
+  function readSRational(view, offset, le) {
+    const num = readInt32(view, offset, le);
+    const den = readInt32(view, offset + 4, le);
+    return den !== 0 ? num / den : 0;
+  }
+
+  function readString(view, offset, length) {
+    let s = "";
+    for (let i = 0; i < length - 1; i++) {
+      const c = view.getUint8(offset + i);
+      if (c === 0) break;
+      s += String.fromCharCode(c);
+    }
+    return s.trim();
+  }
+
+  function parseIFD(view, offset, tiffStart, le, tagMap) {
+    const result = {};
+    let count;
+    try { count = readUint16(view, offset, le); } catch(e) { return result; }
+    for (let i = 0; i < count; i++) {
+      const entryOffset = offset + 2 + i * 12;
+      const tag  = readUint16(view, entryOffset, le);
+      const type = readUint16(view, entryOffset + 2, le);
+      const num  = readUint32(view, entryOffset + 4, le);
+      const valOffset = entryOffset + 8;
+
+      const name = tagMap[tag];
+      if (!name) continue;
+
+      let value;
+      try {
+        if (type === 2) {
+          // ASCII
+          const dataOffset = num > 4 ? tiffStart + readUint32(view, valOffset, le) : valOffset;
+          value = readString(view, dataOffset, num);
+        } else if (type === 3) {
+          // SHORT
+          if (num === 1) value = readUint16(view, valOffset, le);
+          else {
+            const arr = [];
+            const dataOffset = num > 2 ? tiffStart + readUint32(view, valOffset, le) : valOffset;
+            for (let j = 0; j < num; j++) arr.push(readUint16(view, dataOffset + j * 2, le));
+            value = arr;
+          }
+        } else if (type === 4) {
+          // LONG
+          value = readUint32(view, valOffset, le);
+        } else if (type === 5) {
+          // RATIONAL
+          if (num === 1) {
+            const dataOffset = tiffStart + readUint32(view, valOffset, le);
+            value = readRational(view, dataOffset, le);
+          } else {
+            const arr = [];
+            const dataOffset = tiffStart + readUint32(view, valOffset, le);
+            for (let j = 0; j < num; j++) arr.push(readRational(view, dataOffset + j * 8, le));
+            value = arr;
+          }
+        } else if (type === 10) {
+          // SRATIONAL
+          const dataOffset = tiffStart + readUint32(view, valOffset, le);
+          value = readSRational(view, dataOffset, le);
+        } else if (type === 7) {
+          // UNDEFINED - for GPS sub-IFD
+          value = tiffStart + readUint32(view, valOffset, le);
+        } else {
+          continue;
+        }
+      } catch(e) { continue; }
+
+      result[name] = { tag, type, num, value };
+    }
+    return result;
+  }
+
+  function parseExif(arrayBuffer) {
+    const view = new DataView(arrayBuffer);
+    const result = {};
+
+    // Find EXIF marker in JPEG
+    if (view.getUint16(0) !== 0xFFD8) return result; // Not JPEG
+
+    let offset = 2;
+    while (offset < view.byteLength - 2) {
+      const marker = view.getUint16(offset);
+      if (marker === 0xFFE1) break; // APP1
+      if ((marker & 0xFF00) !== 0xFF00) break;
+      offset += 2 + view.getUint16(offset + 2);
+    }
+
+    if (offset >= view.byteLength - 2) return result;
+
+    offset += 2; // skip marker
+    const app1Length = view.getUint16(offset);
+    offset += 2;
+
+    // Check "Exif\0\0"
+    const exifHeader = String.fromCharCode(
+      view.getUint8(offset), view.getUint8(offset+1),
+      view.getUint8(offset+2), view.getUint8(offset+3)
+    );
+    if (exifHeader !== "Exif") return result;
+    offset += 6;
+
+    const tiffStart = offset;
+    const byteOrder = view.getUint16(offset);
+    const le = byteOrder === 0x4949;
+
+    offset += 8; // skip byte order + magic + IFD0 offset word... actually read it
+    const ifd0Offset = tiffStart + readUint32(view, tiffStart + 4, le);
+
+    const ifd0 = parseIFD(view, ifd0Offset, tiffStart, le, EXIF_TAGS);
+
+    // Copy simple values
+    for (const [k, v] of Object.entries(ifd0)) {
+      if (k !== "GPSInfo") result[k] = v.value;
+    }
+
+    // Sub-IFDs: find ExifIFD
+    const ifd0Count = readUint16(view, ifd0Offset, le);
+    for (let i = 0; i < ifd0Count; i++) {
+      const entryOffset = ifd0Offset + 2 + i * 12;
+      const tag = readUint16(view, entryOffset, le);
+      if (tag === 0x8769) { // ExifIFD pointer
+        const exifIFDOffset = tiffStart + readUint32(view, entryOffset + 8, le);
+        const exifIFD = parseIFD(view, exifIFDOffset, tiffStart, le, EXIF_TAGS);
+        for (const [k, v] of Object.entries(exifIFD)) {
+          result[k] = v.value;
+        }
+      }
+      if (tag === 0x8825) { // GPSInfo pointer
+        const gpsOffset = tiffStart + readUint32(view, entryOffset + 8, le);
+        const gpsIFD = parseIFD(view, gpsOffset, tiffStart, le, GPS_TAGS);
+        result._gps = {};
+        for (const [k, v] of Object.entries(gpsIFD)) {
+          result._gps[k] = v.value;
+        }
+      }
+    }
+
+    return result;
+  }
+
+  function dmsToDecimal(dms, ref) {
+    if (!Array.isArray(dms) || dms.length < 3) return null;
+    const deg = dms[0], min = dms[1], sec = dms[2];
+    let dd = deg + min / 60 + sec / 3600;
+    if (ref === "S" || ref === "W") dd = -dd;
+    return Math.round(dd * 1000000) / 1000000;
+  }
+
+  function formatExposure(val) {
+    if (!val) return null;
+    if (val < 1) return `1/${Math.round(1/val)}s`;
+    return `${val}s`;
+  }
+
+  function formatOrientation(val) {
+    const map = {1:"Normal",2:"Flipped H",3:"Rotated 180°",4:"Flipped V",5:"Rotated 90° CW + Flip",6:"Rotated 90° CW",7:"Rotated 90° CCW + Flip",8:"Rotated 90° CCW"};
+    return map[val] || val;
+  }
+
+  function formatFlash(val) {
+    return (val & 1) ? "Flash fired" : "Flash did not fire";
+  }
+
+  // ---- UI ----
+  const dropZone = document.getElementById("drop-zone");
+  const fileInput = document.getElementById("file-input");
+
+  dropZone.addEventListener("dragover", e => { e.preventDefault(); dropZone.classList.add("drag-over"); });
+  dropZone.addEventListener("dragleave", () => dropZone.classList.remove("drag-over"));
+  dropZone.addEventListener("drop", e => {
+    e.preventDefault();
+    dropZone.classList.remove("drag-over");
+    const file = e.dataTransfer.files[0];
+    if (file) processFile(file);
+  });
+
+  fileInput.addEventListener("change", e => {
+    if (e.target.files[0]) processFile(e.target.files[0]);
+  });
+
+  function processFile(file) {
+    const reader = new FileReader();
+    reader.onload = e => {
+      const arrayBuffer = e.target.result;
+      const exif = parseExif(arrayBuffer);
+      displayResults(file, arrayBuffer, exif);
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  function displayResults(file, buffer, exif) {
+    document.getElementById("drop-zone").style.display = "none";
+    const resultsEl = document.getElementById("results");
+    resultsEl.style.display = "block";
+
+    // Preview
+    const blob = new Blob([buffer]);
+    document.getElementById("preview-img").src = URL.createObjectURL(blob);
+    document.getElementById("res-filename").textContent = file.name;
+    document.getElementById("res-filesize").textContent = `${(file.size / 1024).toFixed(1)} KB  ·  ${file.type || "image"}`;
+
+    // GPS
+    const gps = exif._gps;
+    let lat = null, lon = null;
+    if (gps) {
+      lat = dmsToDecimal(gps.GPSLatitude, gps.GPSLatitudeRef);
+      lon = dmsToDecimal(gps.GPSLongitude, gps.GPSLongitudeRef);
+    }
+
+    // Alert
+    const alertBox = document.getElementById("alert-box");
+    if (lat !== null && lon !== null) {
+      alertBox.innerHTML = `<div class="alert alert-gps">⚠️ &nbsp; GPS coordinates found — this image reveals a physical location.</div>`;
+    } else {
+      alertBox.innerHTML = `<div class="alert alert-clean">✓ &nbsp; No GPS data detected in this image.</div>`;
+    }
+
+    // Build sections
+    const sections = document.getElementById("sections");
+    sections.innerHTML = "";
+
+    // --- GPS Section ---
+    const gpsSec = document.createElement("div");
+    gpsSec.className = "section";
+    const gpsFound = lat !== null && lon !== null;
+    const mapsUrl = gpsFound ? `https://maps.google.com/?q=${lat},${lon}` : null;
+    gpsSec.innerHTML = `
+      <div class="section-header">
+        📍 GPS Location
+        <span class="badge ${gpsFound ? 'found' : 'none'}">${gpsFound ? 'FOUND' : 'NONE'}</span>
+      </div>
+      <div class="section-body ${gpsFound ? 'gps-highlight' : ''}">
+        ${gpsFound ? `
+          <div class="row"><div class="row-key">Latitude</div><div class="row-val">${lat}</div></div>
+          <div class="row"><div class="row-key">Longitude</div><div class="row-val">${lon}</div></div>
+          ${gps.GPSAltitude ? `<div class="row"><div class="row-key">Altitude</div><div class="row-val">${Math.round(gps.GPSAltitude)} m</div></div>` : ""}
+          <div class="row"><div class="row-key">Google Maps</div><div class="row-val"><a href="${mapsUrl}" target="_blank">${mapsUrl}</a></div></div>
+        ` : `<div class="no-data">// No GPS data found in this image.</div>`}
+      </div>`;
+    sections.appendChild(gpsSec);
+
+    // --- Device Section ---
+    const deviceData = [
+      ["Make",      exif.Make],
+      ["Model",     exif.Model],
+      ["Software",  exif.Software],
+      ["Lens Make", exif.LensMake],
+      ["Lens Model",exif.LensModel],
+    ].filter(([,v]) => v);
+
+    const devSec = document.createElement("div");
+    devSec.className = "section";
+    devSec.innerHTML = `
+      <div class="section-header">
+        📷 Device / Camera
+        <span class="badge ${deviceData.length ? 'found' : 'none'}">${deviceData.length ? deviceData.length + ' FIELDS' : 'NONE'}</span>
+      </div>
+      <div class="section-body">
+        ${deviceData.length ? deviceData.map(([k,v]) => `<div class="row"><div class="row-key">${k}</div><div class="row-val">${v}</div></div>`).join("") : '<div class="no-data">// No device data found.</div>'}
+      </div>`;
+    sections.appendChild(devSec);
+
+    // --- Datetime Section ---
+    const dtData = [
+      ["Date Taken",    exif.DateTimeOriginal],
+      ["Date Modified", exif.DateTime],
+      ["Date Digitized",exif.DateTimeDigitized],
+    ].filter(([,v]) => v);
+
+    const dtSec = document.createElement("div");
+    dtSec.className = "section";
+    dtSec.innerHTML = `
+      <div class="section-header">
+        🕐 Date & Time
+        <span class="badge ${dtData.length ? 'found' : 'none'}">${dtData.length ? 'FOUND' : 'NONE'}</span>
+      </div>
+      <div class="section-body">
+        ${dtData.length ? dtData.map(([k,v]) => `<div class="row"><div class="row-key">${k}</div><div class="row-val">${v}</div></div>`).join("") : '<div class="no-data">// No datetime data found.</div>'}
+      </div>`;
+    sections.appendChild(dtSec);
+
+    // --- Image Settings Section ---
+    const imgData = [
+      ["Width",        exif.ExifImageWidth  || exif.ImageWidth,  v => v + " px"],
+      ["Height",       exif.ExifImageHeight || exif.ImageHeight, v => v + " px"],
+      ["Orientation",  exif.Orientation,  formatOrientation],
+      ["ISO",          exif.ISOSpeedRatings, v => v],
+      ["Exposure",     exif.ExposureTime,    formatExposure],
+      ["F-Number",     exif.FNumber,         v => "f/" + v.toFixed(1)],
+      ["Focal Length", exif.FocalLength,     v => Math.round(v) + " mm"],
+      ["Flash",        exif.Flash,           formatFlash],
+      ["White Balance",exif.WhiteBalance,    v => v === 0 ? "Auto" : "Manual"],
+    ].filter(([,v]) => v !== undefined && v !== null).map(([k, v, fmt]) => [k, fmt ? fmt(v) : v]);
+
+    const imgSec = document.createElement("div");
+    imgSec.className = "section";
+    imgSec.innerHTML = `
+      <div class="section-header">
+        ⚙️ Image Settings
+        <span class="badge ${imgData.length ? 'found' : 'none'}">${imgData.length ? imgData.length + ' FIELDS' : 'NONE'}</span>
+      </div>
+      <div class="section-body">
+        ${imgData.length ? imgData.map(([k,v]) => `<div class="row"><div class="row-key">${k}</div><div class="row-val">${v}</div></div>`).join("") : '<div class="no-data">// No image settings found.</div>'}
+      </div>`;
+    sections.appendChild(imgSec);
+  }
+
+  function resetTool() {
+    document.getElementById("drop-zone").style.display = "block";
+    document.getElementById("results").style.display = "none";
+    document.getElementById("sections").innerHTML = "";
+    document.getElementById("alert-box").innerHTML = "";
+    document.getElementById("file-input").value = "";
+  }
+</script>
+</body>
+</html>
